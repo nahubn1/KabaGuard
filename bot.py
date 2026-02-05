@@ -676,9 +676,8 @@ async def check_user_attendance(
             logger.debug(f"User {user_id}: Already confirmed clock-out today")
             return
         
-        if user['last_evening_alert_date'] == today.isoformat():
-            logger.debug(f"User {user_id}: Already alerted for clock-out today")
-            return
+        # NOTE: We removed the alert skip check here to allow confirmation after alert
+        # Even if alert was sent, we continue checking to send confirmation when user clocks out
         
         should_scrape = True
         
@@ -732,14 +731,25 @@ async def handle_morning_check(
     bot = Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
     
     if status == AttendanceStatus.CLOCKED_IN:
-        # Success! User has clocked in
-        await bot.send_message(
-            chat_id=user_id,
-            text="✅ *Clock-In Confirmed!*\n\nYou've successfully clocked in. Have a great day!",
-            parse_mode="Markdown"
-        )
+        # Update DB FIRST to prevent duplicates if message send is slow
+        logger.info(f"User {user_id}: Clock-in detected, updating DB to prevent duplicates")
         await db.update_morning_success(user_id, today)
-        logger.info(f"User {user_id}: Morning success notification sent")
+        logger.info(f"User {user_id}: DB updated - last_morning_success_date = {today.isoformat()}")
+        
+        # Then send confirmation message
+        try:
+            formatted_time = current_time.strftime("%I:%M %p")
+            await bot.send_message(
+                chat_id=user_id,
+                text=f"✅ *Clock-In Confirmed!*\n\n"
+                     f"🕒 *Time:* {formatted_time}\n"
+                     f"📍 *Status:* Checked In\n\n"
+                     f"Have a great day!",
+                parse_mode="Markdown"
+            )
+            logger.info(f"User {user_id}: Morning success notification sent successfully")
+        except Exception as e:
+            logger.error(f"User {user_id}: Failed to send message (DB already updated): {e}")
     
     elif status == AttendanceStatus.NO_RECORD:
         # Check if 10 minutes past start time
@@ -772,14 +782,25 @@ async def handle_evening_check(
     bot = Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
     
     if status == AttendanceStatus.CLOCKED_OUT:
-        # Success! User has clocked out
-        await bot.send_message(
-            chat_id=user_id,
-            text="👋 *Clock-Out Confirmed!*\n\nYour shift is complete. See you tomorrow!",
-            parse_mode="Markdown"
-        )
+        # Update DB FIRST to prevent duplicates if message send is slow
+        logger.info(f"User {user_id}: Clock-out detected, updating DB to prevent duplicates")
         await db.update_evening_success(user_id, today)
-        logger.info(f"User {user_id}: Evening success notification sent")
+        logger.info(f"User {user_id}: DB updated - last_evening_success_date = {today.isoformat()}")
+        
+        # Then send confirmation message
+        try:
+            formatted_time = current_time.strftime("%I:%M %p")
+            await bot.send_message(
+                chat_id=user_id,
+                text=f"👋 *Clock-Out Confirmed!*\n\n"
+                     f"🕒 *Time:* {formatted_time}\n"
+                     f"📍 *Status:* Checked Out\n\n"
+                     f"Your shift is complete. See you tomorrow!",
+                parse_mode="Markdown"
+            )
+            logger.info(f"User {user_id}: Evening success notification sent successfully")
+        except Exception as e:
+            logger.error(f"User {user_id}: Failed to send message (DB already updated): {e}")
     
     elif status == AttendanceStatus.CLOCKED_IN:
         # Still clocked in - check if 25 minutes past end time
@@ -788,16 +809,60 @@ async def handle_evening_check(
         grace_period = timedelta(minutes=25)
         
         if current_datetime >= end_datetime + grace_period:
+            # Check retry limits before sending alert
+            user = await db.get_user(user_id)
+            if not user:
+                return
+            
+            # Determine if this is a new day or same day
+            is_new_day = user.get('last_evening_alert_date') != today.isoformat()
+            
+            if not is_new_day:
+                # Same day - check alert count and timing
+                alert_count = user.get('last_evening_alert_count', 0)
+                
+                # Max 3 alerts per day
+                if alert_count >= 3:
+                    logger.info(f"User {user_id}: Max 3 evening alerts already sent today, skipping")
+                    return
+                
+                # Check 15-min gap
+                last_alert_time_str = user.get('last_evening_alert_time')
+                if last_alert_time_str:
+                    try:
+                        last_alert_time = datetime.fromisoformat(last_alert_time_str)
+                        time_since_last = (current_datetime - last_alert_time).total_seconds() / 60
+                        
+                        if time_since_last < 15:
+                            logger.debug(f"User {user_id}: Only {time_since_last:.1f}min since last alert, waiting")
+                            return
+                    except:
+                        pass  # Invalid datetime, continue
+            
             # Send critical alert
-            await bot.send_message(
-                chat_id=user_id,
-                text="🚨 *CRITICAL ALERT!*\n\n"
-                     "⚠️ You have missed the clock-out window!\n"
-                     "⏰ Please clock out NOW on the company portal!",
-                parse_mode="Markdown"
+            alert_number = 1 if is_new_day else (user.get('last_evening_alert_count', 0) + 1)
+            logger.info(f"User {user_id}: Sending evening alert #{alert_number}")
+            
+            try:
+                await bot.send_message(
+                    chat_id=user_id,
+                    text="🚨 *CRITICAL ALERT!*\n\n"
+                         "⚠️ You have missed the clock-out window!\n"
+                         "⏰ Please clock out NOW on the company portal!",
+                    parse_mode="Markdown"
+                )
+                logger.info(f"User {user_id}: Evening alert #{alert_number} sent (25+ mins late)")
+            except Exception as e:
+                logger.error(f"User {user_id}: Failed to send alert: {e}")
+                return  # Don't update DB if message failed
+            
+            # Update DB with retry tracking
+            await db.update_evening_alert_with_count(
+                user_id, 
+                today, 
+                current_datetime.isoformat(), 
+                is_new_day
             )
-            await db.update_evening_alert(user_id, today)
-            logger.info(f"User {user_id}: Evening alert sent (25+ mins late)")
 
 
 # ==================== MAIN APPLICATION ====================
