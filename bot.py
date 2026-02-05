@@ -320,10 +320,22 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if portal_status == AttendanceStatus.CLOCKED_OUT:
             status_msg += (
                 "Portal Status: ✅ CLOCKED_OUT\n\n"
-                "📬 Would send message:\n"
-                "'👋 Clock-Out Confirmed! Your shift is complete. See you tomorrow!'\n\n"
-                f"DB update: last_evening_success_date = {today.isoformat()}"
+                f"DB update: last_evening_success_date = {today.isoformat()}\n\n"
+                "⬇️ *Sending preview below...*"
             )
+            # Send status first
+            await update.message.reply_text(status_msg, parse_mode="Markdown")
+            
+            # Send actual preview
+            formatted_time = test_time.strftime("%I:%M %p")
+            await update.message.reply_text(
+                f"👋 *Clock-Out Confirmed!*\n\n"
+                f"🕒 *Time:* {formatted_time}\n"
+                f"📍 *Status:* Checked Out\n\n"
+                f"Your shift is complete. See you tomorrow!",
+                parse_mode="Markdown"
+            )
+            return
         elif portal_status == AttendanceStatus.CLOCKED_IN:
             from datetime import datetime, timedelta
             end_datetime = datetime.combine(today, end_time)
@@ -334,10 +346,20 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 status_msg += (
                     "Portal Status: ⏰ CLOCKED_IN (still clocked in)\n"
                     f"Time since shift end: {(current_datetime - end_datetime).seconds // 60} minutes\n\n"
-                    "🚨 Would send CRITICAL ALERT:\n"
-                    "'🚨 CRITICAL ALERT! ⚠️ You have missed the clock-out window! ⏰ Please clock out NOW!'\n\n"
-                    f"DB update: last_evening_alert_date = {today.isoformat()}"
+                    f"DB update: last_evening_alert_date = {today.isoformat()}\n\n"
+                    "⬇️ *Sending preview below...*"
                 )
+                # Send status first
+                await update.message.reply_text(status_msg, parse_mode="Markdown")
+                
+                # Send actual preview
+                await update.message.reply_text(
+                    "🚨 *CRITICAL ALERT!*\n\n"
+                    "⚠️ You have missed the clock-out window!\n"
+                    "⏰ Please clock out NOW on the company portal!",
+                    parse_mode="Markdown"
+                )
+                return
             else:
                 mins_until_alert = 25 - ((current_datetime - end_datetime).seconds // 60)
                 status_msg += (
@@ -366,10 +388,22 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if portal_status == AttendanceStatus.CLOCKED_IN:
             status_msg += (
                 "Portal Status: ✅ CLOCKED_IN\n\n"
-                "📬 Would send message:\n"
-                "'✅ Clock-In Confirmed! You've successfully clocked in. Have a great day!'\n\n"
-                f"DB update: last_morning_success_date = {today.isoformat()}"
+                f"DB update: last_morning_success_date = {today.isoformat()}\n\n"
+                "⬇️ *Sending preview below...*"
             )
+            # Send status first
+            await update.message.reply_text(status_msg, parse_mode="Markdown")
+            
+            # Send actual preview
+            formatted_time = test_time.strftime("%I:%M %p")
+            await update.message.reply_text(
+                f"✅ *Clock-In Confirmed!*\n\n"
+                f"🕒 *Time:* {formatted_time}\n"
+                f"📍 *Status:* Checked In\n\n"
+                f"Have a great day!",
+                parse_mode="Markdown"
+            )
+            return
         elif portal_status == AttendanceStatus.NO_RECORD:
             from datetime import datetime, timedelta
             start_datetime = datetime.combine(today, start_time)
@@ -380,10 +414,20 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 status_msg += (
                     "Portal Status: ❌ NO_RECORD\n"
                     f"Time since shift start: {(current_datetime - start_datetime).seconds // 60} minutes\n\n"
-                    "🚨 Would send CRITICAL ALERT:\n"
-                    "'🚨 CRITICAL ALERT! ⚠️ You have missed the clock-in window! ⏰ Please clock in NOW!'\n\n"
-                    f"DB update: last_morning_alert_date = {today.isoformat()}"
+                    f"DB update: last_morning_alert_date = {today.isoformat()}\n\n"
+                    "⬇️ *Sending preview below...*"
                 )
+                # Send status first
+                await update.message.reply_text(status_msg, parse_mode="Markdown")
+                
+                # Send actual preview
+                await update.message.reply_text(
+                    "🚨 *CRITICAL ALERT!*\n\n"
+                    "⚠️ You have missed the clock-in window!\n"
+                    "⏰ Please clock in NOW on the company portal!",
+                    parse_mode="Markdown"
+                )
+                return
             else:
                 mins_until_alert = 10 - ((current_datetime - start_datetime).seconds // 60)
                 status_msg += (
