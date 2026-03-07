@@ -49,11 +49,17 @@ async def proxy_handler(request):
                 
                 response_data = await response.read()
                 
+                # aiohttp web.Response doesn't allow 'charset' in the content_type argument
+                content_type = response.headers.get('Content-Type', 'application/json')
+                # Content-Type often comes as "application/json; charset=utf-8"
+                if ';' in content_type:
+                    content_type = content_type.split(';')[0].strip()
+                
                 # Relay the response stream back to the original client
                 return web.Response(
                     body=response_data,
                     status=response.status,
-                    content_type=response.headers.get('Content-Type', 'application/json')
+                    content_type=content_type
                 )
                 
     except Exception as e:
