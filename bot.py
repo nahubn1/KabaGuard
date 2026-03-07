@@ -938,8 +938,18 @@ def main() -> None:
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN not found in environment variables!")
     
-    # Create application (SSL bypass is handled globally at import time)
-    application = Application.builder().token(token).post_init(post_init).build()
+    # Retrieve the custom Proxy URL from the environment (for corporate firewall bypass)
+    custom_api_url = os.getenv("TELEGRAM_API_URL")
+    
+    # Create application builder
+    builder = Application.builder().token(token).post_init(post_init)
+    
+    # If a custom Gateway URL is provided, instruct the bot to use it
+    if custom_api_url:
+        logger.info(f"Using Custom Telegram Relay Gateway: {custom_api_url}")
+        builder.base_url(custom_api_url)
+        
+    application = builder.build()
     
     # Register conversation handler for registration
     registration_handler = ConversationHandler(
