@@ -7,7 +7,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 from enum import Enum
 from datetime import date
-from typing import Optional
+from typing import Optional, Tuple, Dict
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ async def check_attendance_async(
     kaba_id: str,
     check_date: date,
     portal_url: str
-) -> AttendanceStatus:
+) -> Tuple[AttendanceStatus, Optional[Dict]]:
     """
     Check attendance status for a user on a specific date from the Kaba portal.
     
@@ -57,7 +57,7 @@ async def check_attendance_async(
         async with session.get(portal_url, timeout=aiohttp.ClientTimeout(total=30)) as initial_response:
             if initial_response.status != 200:
                 logger.error(f"Failed to fetch form page: status {initial_response.status}")
-                return AttendanceStatus.NO_RECORD
+                return AttendanceStatus.NO_RECORD, None
             
             initial_html = await initial_response.text()
             initial_soup = BeautifulSoup(initial_html, 'html.parser')
@@ -69,7 +69,7 @@ async def check_attendance_async(
             
             if not viewstate:
                 logger.error("Could not find __VIEWSTATE in form")
-                return AttendanceStatus.NO_RECORD
+                return AttendanceStatus.NO_RECORD, None
             
             logger.info("✅ Retrieved ASP.NET hidden fields")
         
@@ -105,7 +105,7 @@ async def check_attendance_async(
             
             if response.status != 200:
                 logger.error(f"Form submission failed with status {response.status}")
-                return AttendanceStatus.NO_RECORD
+                return AttendanceStatus.NO_RECORD, None
             
             html = await response.text()
             
@@ -129,7 +129,7 @@ async def check_attendance_async(
                 
                 if not table:
                     logger.warning(f"No results found for kaba_id={kaba_id}")
-                    return AttendanceStatus.NO_RECORD
+                    return AttendanceStatus.NO_RECORD, None
                 
                 rows = table.find_all('tr')[1:]  # Skip header row
             
@@ -137,11 +137,13 @@ async def check_attendance_async(
             
             if not rows:
                 logger.info(f"No attendance records found for kaba_id={kaba_id}")
-                return AttendanceStatus.NO_RECORD
+                return AttendanceStatus.NO_RECORD, None
             
             # Track what events we found for this date
             has_clock_in = False
             has_clock_out = False
+            
+            details = {'clock_in': None, 'clock_out': None}
             
             for row in rows:
                 cells = row.find_all('td')
@@ -160,32 +162,40 @@ async def check_attendance_async(
                 # Check for CLOCK_IN or CLOCK_OUT events
                 if 'CLOCK_IN' in event or 'CLOCK IN' in event:
                     has_clock_in = True
+                    details['clock_in'] = {
+                        'time': cells[3].get_text(strip=True) if len(cells) > 3 else "Unknown",
+                        'location': cells[4].get_text(strip=True) if len(cells) > 4 else "Unknown"
+                    }
                     logger.info(f"✅ Found CLOCK_IN for kaba_id={kaba_id}")
                 
-                if 'CLOCK_OUT' in event or 'CLOCK OUT' in event or 'CLOCK_OUT' in event:
+                if 'CLOCK_OUT' in event or 'CLOCK OUT' in event:
                     has_clock_out = True
+                    details['clock_out'] = {
+                        'time': cells[3].get_text(strip=True) if len(cells) > 3 else "Unknown",
+                        'location': cells[4].get_text(strip=True) if len(cells) > 4 else "Unknown"
+                    }
                     logger.info(f"✅ Found CLOCK_OUT for kaba_id={kaba_id}")
             
             # Determine status based on what we found
             if has_clock_out:
                 # If we found clock out, it means they completed their shift
                 logger.info(f"User {kaba_id} has CLOCKED_OUT")
-                return AttendanceStatus.CLOCKED_OUT
+                return AttendanceStatus.CLOCKED_OUT, details
             elif has_clock_in:
                 # Only clock in, still in the building
                 logger.info(f"User {kaba_id} has CLOCKED_IN (not yet clocked out)")
-                return AttendanceStatus.CLOCKED_IN
+                return AttendanceStatus.CLOCKED_IN, details
             else:
                 # No records found
                 logger.info(f"User {kaba_id} has NO_RECORD")
-                return AttendanceStatus.NO_RECORD
+                return AttendanceStatus.NO_RECORD, details
             
     except aiohttp.ClientError as e:
         logger.error(f"Network error while checking attendance for {kaba_id}: {e}")
         # In case of network error, return NO_RECORD to avoid false alerts
-        return AttendanceStatus.NO_RECORD
+        return AttendanceStatus.NO_RECORD, None
     
     except Exception as e:
         logger.error(f"Unexpected error in check_attendance_async for {kaba_id}: {e}")
         logger.exception(e)  # Log full stack trace
-        return AttendanceStatus.NO_RECORD
+        return AttendanceStatus.NO_RECORD, None
