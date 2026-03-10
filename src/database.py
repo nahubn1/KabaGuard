@@ -27,6 +27,8 @@ class Database:
                     working_days TEXT NOT NULL,
                     last_morning_success_date TEXT,
                     last_morning_alert_date TEXT,
+                    last_morning_alert_count INTEGER DEFAULT 0,
+                    last_morning_alert_time TEXT,
                     last_evening_success_date TEXT,
                     last_evening_alert_date TEXT,
                     last_evening_alert_count INTEGER DEFAULT 0,
@@ -44,6 +46,18 @@ class Database:
             
             try:
                 await db.execute("ALTER TABLE users ADD COLUMN last_evening_alert_time TEXT")
+                await db.commit()
+            except:
+                pass  # Column already exists
+                
+            try:
+                await db.execute("ALTER TABLE users ADD COLUMN last_morning_alert_count INTEGER DEFAULT 0")
+                await db.commit()
+            except:
+                pass  # Column already exists
+            
+            try:
+                await db.execute("ALTER TABLE users ADD COLUMN last_morning_alert_time TEXT")
                 await db.commit()
             except:
                 pass  # Column already exists
@@ -176,4 +190,34 @@ class Database:
                     (alert_date.isoformat(), alert_datetime, user_id)
                 )
                 logger.info(f"DB COMMIT: User {user_id} evening alert incremented, date={alert_date.isoformat()}")
+            await db.commit()
+
+    async def update_morning_alert_with_count(self, user_id: int, alert_date: date, alert_datetime: str, is_new_day: bool = False) -> None:
+        """Update morning alert with retry count tracking."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        async with aiosqlite.connect(self.db_path) as db:
+            if is_new_day:
+                # Reset count for new day
+                await db.execute(
+                    "UPDATE users SET "
+                    "last_morning_alert_date = ?, "
+                    "last_morning_alert_time = ?, "
+                    "last_morning_alert_count = 1 "
+                    "WHERE user_id = ?",
+                    (alert_date.isoformat(), alert_datetime, user_id)
+                )
+                logger.info(f"DB COMMIT: User {user_id} morning alert reset, count=1, date={alert_date.isoformat()}")
+            else:
+                # Increment count
+                await db.execute(
+                    "UPDATE users SET "
+                    "last_morning_alert_date = ?, "
+                    "last_morning_alert_time = ?, "
+                    "last_morning_alert_count = last_morning_alert_count + 1 "
+                    "WHERE user_id = ?",
+                    (alert_date.isoformat(), alert_datetime, user_id)
+                )
+                logger.info(f"DB COMMIT: User {user_id} morning alert incremented, date={alert_date.isoformat()}")
             await db.commit()

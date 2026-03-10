@@ -97,10 +97,7 @@ async def check_user_attendance(
             logger.debug(f"User {user_id}: Already confirmed clock-in today")
             return
         
-        if user['last_morning_alert_date'] == today.isoformat():
-            logger.debug(f"User {user_id}: Already alerted for clock-in today")
-            return
-        
+        # NOTE: We removed the alert skip check here to allow confirmation after an alert
         should_scrape = True
     
     else:
@@ -165,22 +162,66 @@ async def handle_morning_check(
             logger.error(f"User {user_id}: Failed to send message (DB already updated): {e}")
     
     elif status == AttendanceStatus.NO_RECORD:
-        # Check if 10 minutes past start time
+        # Check if past start time (no grace period)
         start_datetime = datetime.combine(today, start_time)
         current_datetime = datetime.combine(today, current_time)
-        grace_period = timedelta(minutes=10)
         
-        if current_datetime >= start_datetime + grace_period:
+        if current_datetime >= start_datetime:
+            # Check retry limits before sending alert
+            user = await db.get_user(user_id)
+            if not user:
+                return
+            
+            # Determine if this is a new day or same day
+            is_new_day = user.get('last_morning_alert_date') != today.isoformat()
+            
+            if not is_new_day:
+                # Same day - check alert count and timing
+                alert_count = user.get('last_morning_alert_count', 0)
+                
+                # Calculate required gap using exponential backoff (5 min, 10 min, 20 min, 40 min...)
+                if alert_count > 0:
+                    required_gap_minutes = 5 * (2 ** (alert_count - 1))
+                else:
+                    required_gap_minutes = 5  # Fallback
+                
+                # Check gap
+                last_alert_time_str = user.get('last_morning_alert_time')
+                if last_alert_time_str:
+                    try:
+                        last_alert_time = datetime.fromisoformat(last_alert_time_str)
+                        time_since_last = (current_datetime - last_alert_time).total_seconds() / 60
+                        
+                        if time_since_last < required_gap_minutes:
+                            logger.debug(f"User {user_id}: Only {time_since_last:.1f}min since last alert (need {required_gap_minutes}min), waiting")
+                            return
+                    except:
+                        pass  # Invalid datetime, continue
+            
             # Send critical alert
-            await bot.send_message(
-                chat_id=user_id,
-                text="🚨 *CRITICAL ALERT!*\n\n"
-                     "⚠️ You have missed the clock-in window!\n"
-                     "⏰ Please clock in NOW on the company portal!",
-                parse_mode="Markdown"
+            alert_number = 1 if is_new_day else (user.get('last_morning_alert_count', 0) + 1)
+            logger.info(f"User {user_id}: Sending morning alert #{alert_number}")
+            
+            try:
+                await bot.send_message(
+                    chat_id=user_id,
+                    text="🚨 *CRITICAL ALERT!*\n\n"
+                         "⚠️ You have missed the clock-in window!\n"
+                         "⏰ Please clock in NOW on the company portal!",
+                    parse_mode="Markdown"
+                )
+                logger.info(f"User {user_id}: Morning alert #{alert_number} sent (0+ mins late)")
+            except Exception as e:
+                logger.error(f"User {user_id}: Failed to send alert: {e}")
+                return  # Don't update DB if message failed
+            
+            # Update DB with retry tracking
+            await db.update_morning_alert_with_count(
+                user_id, 
+                today, 
+                current_datetime.isoformat(), 
+                is_new_day
             )
-            await db.update_morning_alert(user_id, today)
-            logger.info(f"User {user_id}: Morning alert sent (10+ mins late)")
 
 
 async def handle_evening_check(
@@ -240,20 +281,21 @@ async def handle_evening_check(
                 # Same day - check alert count and timing
                 alert_count = user.get('last_evening_alert_count', 0)
                 
-                # Max 3 alerts per day
-                if alert_count >= 3:
-                    logger.info(f"User {user_id}: Max 3 evening alerts already sent today, skipping")
-                    return
+                # Calculate required gap using exponential backoff (5 min, 10 min, 20 min, 40 min...)
+                if alert_count > 0:
+                    required_gap_minutes = 5 * (2 ** (alert_count - 1))
+                else:
+                    required_gap_minutes = 5  # Fallback
                 
-                # Check 15-min gap
+                # Check gap
                 last_alert_time_str = user.get('last_evening_alert_time')
                 if last_alert_time_str:
                     try:
                         last_alert_time = datetime.fromisoformat(last_alert_time_str)
                         time_since_last = (current_datetime - last_alert_time).total_seconds() / 60
                         
-                        if time_since_last < 15:
-                            logger.debug(f"User {user_id}: Only {time_since_last:.1f}min since last alert, waiting")
+                        if time_since_last < required_gap_minutes:
+                            logger.debug(f"User {user_id}: Only {time_since_last:.1f}min since last alert (need {required_gap_minutes}min), waiting")
                             return
                     except:
                         pass  # Invalid datetime, continue
