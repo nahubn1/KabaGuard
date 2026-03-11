@@ -115,6 +115,10 @@ async def check_user_attendance(
     portal_url = os.getenv("PORTAL_URL", "https://example.com/attendance")
     status, details = await check_attendance_async(session, user['kaba_id'], today, portal_url)
     
+    if status == AttendanceStatus.ERROR:
+        logger.warning(f"User {user_id}: Skipping alert due to scraper error.")
+        return
+
     # ===== STEP 4: DECISION & ACTION =====
     
     if check_type == 'morning':

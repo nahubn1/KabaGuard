@@ -149,6 +149,13 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     f"📤 Clock-Out: {out_info}\n\n"
                     f"Clock-in record found, but no clock-out yet."
                 )
+            elif status == AttendanceStatus.ERROR:
+                message = (
+                    f"⚠️ *Status: ERROR*\n\n"
+                    f"📅 Date: {check_date.strftime('%B %d, %Y')}\n"
+                    f"🆔 Kaba ID: `{user['kaba_id']}`\n\n"
+                    f"A network or portal error occurred while checking attendance. The portal might be down."
+                )
             else:
                 message = (
                     f"❌ *Status: NO RECORD*\n\n"
@@ -240,7 +247,12 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         async with aiohttp.ClientSession() as session:
             portal_status, details = await check_attendance_async(session, user['kaba_id'], today, portal_url)
         
-        if portal_status == AttendanceStatus.CLOCKED_OUT:
+        if portal_status == AttendanceStatus.ERROR:
+            status_msg += (
+                "Portal Status: ⚠️ ERROR\n\n"
+                "⚠️ No action - Error connecting to the portal, skipping clock-out check"
+            )
+        elif portal_status == AttendanceStatus.CLOCKED_OUT:
             status_msg += (
                 "Portal Status: ✅ CLOCKED_OUT\n\n"
                 f"DB update: last_evening_success_date = {today.isoformat()}\n\n"
@@ -307,7 +319,12 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         async with aiohttp.ClientSession() as session:
             portal_status, details = await check_attendance_async(session, user['kaba_id'], today, portal_url)
         
-        if portal_status == AttendanceStatus.CLOCKED_IN:
+        if portal_status == AttendanceStatus.ERROR:
+            status_msg += (
+                "Portal Status: ⚠️ ERROR\n\n"
+                "⚠️ No action - Error connecting to the portal, skipping clock-in check"
+            )
+        elif portal_status == AttendanceStatus.CLOCKED_IN:
             status_msg += (
                 "Portal Status: ✅ CLOCKED_IN\n\n"
                 f"DB update: last_morning_success_date = {today.isoformat()}\n\n"

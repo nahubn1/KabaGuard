@@ -18,6 +18,7 @@ class AttendanceStatus(Enum):
     CLOCKED_IN = "clocked_in"
     CLOCKED_OUT = "clocked_out"
     NO_RECORD = "no_record"
+    ERROR = "error"
 
 
 async def check_attendance_async(
@@ -57,7 +58,7 @@ async def check_attendance_async(
         async with session.get(portal_url, timeout=aiohttp.ClientTimeout(total=30)) as initial_response:
             if initial_response.status != 200:
                 logger.error(f"Failed to fetch form page: status {initial_response.status}")
-                return AttendanceStatus.NO_RECORD, None
+                return AttendanceStatus.ERROR, None
             
             initial_html = await initial_response.text()
             initial_soup = BeautifulSoup(initial_html, 'html.parser')
@@ -69,7 +70,7 @@ async def check_attendance_async(
             
             if not viewstate:
                 logger.error("Could not find __VIEWSTATE in form")
-                return AttendanceStatus.NO_RECORD, None
+                return AttendanceStatus.ERROR, None
             
             logger.info("✅ Retrieved ASP.NET hidden fields")
         
@@ -105,7 +106,7 @@ async def check_attendance_async(
             
             if response.status != 200:
                 logger.error(f"Form submission failed with status {response.status}")
-                return AttendanceStatus.NO_RECORD, None
+                return AttendanceStatus.ERROR, None
             
             html = await response.text()
             
@@ -192,10 +193,10 @@ async def check_attendance_async(
             
     except aiohttp.ClientError as e:
         logger.error(f"Network error while checking attendance for {kaba_id}: {e}")
-        # In case of network error, return NO_RECORD to avoid false alerts
-        return AttendanceStatus.NO_RECORD, None
+        # In case of network error, return ERROR to avoid false alerts
+        return AttendanceStatus.ERROR, None
     
     except Exception as e:
         logger.error(f"Unexpected error in check_attendance_async for {kaba_id}: {e}")
         logger.exception(e)  # Log full stack trace
-        return AttendanceStatus.NO_RECORD, None
+        return AttendanceStatus.ERROR, None
