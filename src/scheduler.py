@@ -210,8 +210,7 @@ async def handle_morning_check(
                 await bot.send_message(
                     chat_id=user_id,
                     text="🚨 *CRITICAL ALERT!*\n\n"
-                         "⚠️ You have missed the clock-in window!\n"
-                         "⏰ Please clock in NOW on the company portal!",
+                         "⚠️ You have missed the clock-in window!",
                     parse_mode="Markdown"
                 )
                 logger.info(f"User {user_id}: Morning alert #{alert_number} sent (0+ mins late)")
@@ -312,8 +311,7 @@ async def handle_evening_check(
                 await bot.send_message(
                     chat_id=user_id,
                     text="🚨 *CRITICAL ALERT!*\n\n"
-                         "⚠️ You have missed the clock-out window!\n"
-                         "⏰ Please clock out NOW on the company portal!",
+                         "⚠️ You have missed the clock-out window!",
                     parse_mode="Markdown"
                 )
                 logger.info(f"User {user_id}: Evening alert #{alert_number} sent (25+ mins late)")

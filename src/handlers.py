@@ -291,8 +291,7 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 await update.message.reply_text(status_msg, parse_mode="Markdown")
                 await update.message.reply_text(
                     "🚨 *CRITICAL ALERT!*\n\n"
-                    "⚠️ You have missed the clock-out window!\n"
-                    "⏰ Please clock out NOW on the company portal!",
+                    "⚠️ You have missed the clock-out window!",
                     parse_mode="Markdown"
                 )
                 return
@@ -363,8 +362,7 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 await update.message.reply_text(status_msg, parse_mode="Markdown")
                 await update.message.reply_text(
                     "🚨 *CRITICAL ALERT!*\n\n"
-                    "⚠️ You have missed the clock-in window!\n"
-                    "⏰ Please clock in NOW on the company portal!",
+                    "⚠️ You have missed the clock-in window!",
                     parse_mode="Markdown"
                 )
                 return
