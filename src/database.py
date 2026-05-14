@@ -62,6 +62,30 @@ class Database:
             except:
                 pass  # Column already exists
 
+            try:
+                await db.execute("ALTER TABLE users ADD COLUMN morning_snooze_until TEXT")
+                await db.commit()
+            except:
+                pass
+
+            try:
+                await db.execute("ALTER TABLE users ADD COLUMN morning_dismissed_date TEXT")
+                await db.commit()
+            except:
+                pass
+
+            try:
+                await db.execute("ALTER TABLE users ADD COLUMN evening_snooze_until TEXT")
+                await db.commit()
+            except:
+                pass
+
+            try:
+                await db.execute("ALTER TABLE users ADD COLUMN evening_dismissed_date TEXT")
+                await db.commit()
+            except:
+                pass
+
     
     async def register_user(
         self,
@@ -220,4 +244,40 @@ class Database:
                     (alert_date.isoformat(), alert_datetime, user_id)
                 )
                 logger.info(f"DB COMMIT: User {user_id} morning alert incremented, date={alert_date.isoformat()}")
+            await db.commit()
+
+    async def set_morning_snooze(self, user_id: int, snooze_until: str) -> None:
+        """Update morning snooze setting."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE users SET morning_snooze_until = ? WHERE user_id = ?",
+                (snooze_until, user_id)
+            )
+            await db.commit()
+
+    async def set_morning_dismissed(self, user_id: int, dismissed_date: str) -> None:
+        """Update morning dismissed date."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE users SET morning_dismissed_date = ? WHERE user_id = ?",
+                (dismissed_date, user_id)
+            )
+            await db.commit()
+
+    async def set_evening_snooze(self, user_id: int, snooze_until: str) -> None:
+        """Update evening snooze setting."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE users SET evening_snooze_until = ? WHERE user_id = ?",
+                (snooze_until, user_id)
+            )
+            await db.commit()
+
+    async def set_evening_dismissed(self, user_id: int, dismissed_date: str) -> None:
+        """Update evening dismissed date."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE users SET evening_dismissed_date = ? WHERE user_id = ?",
+                (dismissed_date, user_id)
+            )
             await db.commit()

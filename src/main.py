@@ -2,10 +2,18 @@ import os
 import logging
 import ssl
 import warnings
+import sys
+from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables FIRST before importing telegram or httpx
 load_dotenv()
+
+# Allow this file to be run directly by an IDE as `python src/main.py`.
+# Relative imports below still work because we point Python at the project root.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    __package__ = "src"
 
 # SSL bypass for corporate networks - must be done BEFORE importing telegram
 if os.getenv("DISABLE_SSL_VERIFY", "0").lower() in ("1", "true", "yes"):
@@ -20,10 +28,10 @@ if os.getenv("DISABLE_SSL_VERIFY", "0").lower() in ("1", "true", "yes"):
         return _original_init(self, *args, **kwargs)
     
     httpx.AsyncClient.__init__ = _patched_init
-    print("⚠️  SSL verification is DISABLED globally - not secure for production!")
+    print("WARNING: SSL verification is DISABLED globally - not secure for production!")
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ConversationHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from .utils import EAT
@@ -32,7 +40,7 @@ from .scheduler import check_all_users_attendance
 from .handlers import (
     start_command, help_command, status_command, check_command, test_command,
     register_start, ask_start_time, ask_end_time, ask_working_days, 
-    confirm_registration, save_registration, cancel_registration,
+    confirm_registration, save_registration, cancel_registration, alert_button_callback,
     ASK_KABA_ID, ASK_START_TIME, ASK_END_TIME, ASK_WORKING_DAYS, CONFIRM
 )
 
@@ -109,6 +117,7 @@ def main() -> None:
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("check", check_command))
     application.add_handler(CommandHandler("test", test_command))
+    application.add_handler(CallbackQueryHandler(alert_button_callback))
     
     # Start bot (scheduler will be initialized in post_init)
     logger.info("KabaGuard bot starting...")

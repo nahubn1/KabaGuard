@@ -221,7 +221,7 @@ async def handle_morning_check(
             keyboard = [
                 [
                     InlineKeyboardButton("Snooze clock-in 30'", callback_data="snooze_morning"),
-                    InlineKeyboardButton("Dismiss Alert", callback_data="dismiss_morning")
+                    InlineKeyboardButton("Dismiss clock-in", callback_data="dismiss_morning")
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -350,7 +350,7 @@ async def handle_evening_check(
             keyboard = [
                 [
                     InlineKeyboardButton("Snooze clock-out 30'", callback_data="snooze_evening"),
-                    InlineKeyboardButton("Dismiss Alert", callback_data="dismiss_evening")
+                    InlineKeyboardButton("Dismiss clock-out", callback_data="dismiss_evening")
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)

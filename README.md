@@ -58,6 +58,17 @@ python bot.py
 - `/check YYYY-MM-DD` - Test scraper for a specific date (debugging)
 - `/help` - Show help message
 
+### Developer Commands
+
+- `/test HH:MM [YYYY-MM-DD]` - Dry-run scheduler logic at a specific time and optional date
+- `/test now` - Dry-run scheduler logic using the actual current date/time
+
+Set `DEV_USER_IDS` in `.env` to a comma-separated list of Telegram user IDs allowed to use developer commands:
+
+```env
+DEV_USER_IDS=123456789,987654321
+```
+
 ### Registration Flow
 
 1. **Kaba ID**: Enter your company portal ID

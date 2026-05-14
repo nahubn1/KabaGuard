@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 import aiohttp
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
@@ -18,6 +18,27 @@ ASK_KABA_ID, ASK_START_TIME, ASK_END_TIME, ASK_WORKING_DAYS, CONFIRM = range(5)
 
 # ==================== COMMAND HANDLERS ====================
 
+def _developer_user_ids() -> set[int]:
+    """Return Telegram user IDs allowed to use developer-only commands."""
+    configured = os.getenv("DEV_USER_IDS", "")
+    user_ids = set()
+    for item in configured.replace(";", ",").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            user_ids.add(int(item))
+        except ValueError:
+            logger.warning("Ignoring invalid DEV_USER_IDS entry: %s", item)
+    return user_ids
+
+
+def _is_developer(update: Update) -> bool:
+    """Check if the current Telegram user is allowed to use dev tools."""
+    if not update.effective_user:
+        return False
+    return update.effective_user.id in _developer_user_ids()
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
     await update.message.reply_text(
@@ -33,13 +54,17 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help command."""
+    test_command_help = ""
+    if _is_developer(update):
+        test_command_help = "/test HH:MM [YYYY-MM-DD] - Developer dry-run scheduler simulation\n"
+
     await update.message.reply_text(
         "*KabaGuard Commands:*\n\n"
         "/start - Welcome message\n"
         "/register - Register or update your schedule\n"
         "/status - View your current settings\n"
         "/check YYYY-MM-DD - Test scraper for a specific date\n"
-        "/test HH:MM - Simulate scheduler at a specific time\n"
+        f"{test_command_help}"
         "/help - Show this help message\n\n"
         "*How it works:*\n"
         "After registration, I'll check the company portal during your shift hours. "
@@ -94,7 +119,7 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             parse_mode="Markdown"
         )
         return
-    
+
     try:
         date_str = context.args[0]
         check_date = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -175,7 +200,13 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /test command - simulate scheduler check with custom time."""
+    """Handle /test command - simulate scheduler check with custom time/date."""
+    if not _is_developer(update):
+        await update.message.reply_text(
+            "❌ This is a developer-only command."
+        )
+        return
+
     user = await db.get_user(update.effective_user.id)
     
     if not user:
@@ -188,13 +219,30 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not context.args:
         await update.message.reply_text(
             "🧪 *Test Scheduler Logic*\n\n"
-            "Usage: `/test HH:MM`\n\n"
-            "Example: `/test 17:30` - Simulates scheduler running at 17:30\n\n"
+            "Usage: `/test HH:MM [YYYY-MM-DD]` or `/test now`\n\n"
+            "Examples:\n"
+            "`/test 17:30` - Simulates today at 17:30\n"
+            "`/test 17:30 2026-05-15` - Simulates May 15, 2026 at 17:30\n\n"
+            "`/test now` - Dry-runs the actual current date/time\n\n"
             "This will:\n"
-            "• Check if it's a working day\n"
-            "• Run the scheduler logic as if current time is HH:MM\n"
+            "• Check if the selected date is a working day or holiday\n"
+            "• Run the scheduler logic as if current time/date is the value you entered\n"
             "• Show what alerts would be sent (without actually sending them)\n\n"
             "Perfect for testing without waiting for actual shift times!",
+            parse_mode="Markdown"
+        )
+        return
+
+    if len(context.args) == 1 and context.args[0].lower() in ("now", "live", "current"):
+        now = get_current_time_eat()
+        from .testing import run_test_simulation
+        await run_test_simulation(update, context, user, now.time(), now.date())
+        return
+
+    if len(context.args) > 2:
+        await update.message.reply_text(
+            "❌ Too many arguments!\n\n"
+            "Usage: `/test HH:MM [YYYY-MM-DD]` or `/test now`",
             parse_mode="Markdown"
         )
         return
@@ -211,182 +259,19 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
     
-    today = get_current_time_eat().date()
-    start_time = parse_time(user['start_time'])
-    end_time = parse_time(user['end_time'])
-    working_day_indices = [int(d) for d in user['working_days'].split(',')]
-    
-    status_msg = (
-        f"🧪 *Test Mode - Simulating {test_time_str}*\n\n"
-        f"📅 Date: {today.strftime('%B %d, %Y')}\n"
-        f"🆔 Kaba ID: `{user['kaba_id']}`\n"
-        f"🕐 Your shift: {user['start_time']} - {user['end_time']}\n\n"
-    )
-    
-    if is_ethiopian_holiday(today):
-        status_msg += "🎉 *Today is an Ethiopian holiday!*\n\nScheduler would skip this day.\n"
-        await update.message.reply_text(status_msg, parse_mode="Markdown")
-        return
-    
-    if today.weekday() not in working_day_indices:
-        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        status_msg += f"📅 *Today is {day_names[today.weekday()]} - Not a working day!*\n\nScheduler would skip this day.\n"
-        await update.message.reply_text(status_msg, parse_mode="Markdown")
-        return
-    
-    status_msg += "✅ Working day - scheduler would run\n\n"
-    
-    morning_window = test_time >= start_time
-    evening_window = test_time >= end_time
-    
-    if evening_window:
-        status_msg += "🌆 **Evening Window (Clock-out Check)**\n\n"
-        await update.message.reply_text(status_msg + "🔄 Checking portal...", parse_mode="Markdown")
-        
-        portal_url = os.getenv("PORTAL_URL", "https://example.com/attendance")
-        async with aiohttp.ClientSession() as session:
-            portal_status, details = await check_attendance_async(session, user['kaba_id'], today, portal_url)
-        
-        if portal_status == AttendanceStatus.ERROR:
-            status_msg += (
-                "Portal Status: ⚠️ ERROR\n\n"
-                "⚠️ No action - Error connecting to the portal, skipping clock-out check"
-            )
-        elif portal_status == AttendanceStatus.CLOCKED_OUT:
-            status_msg += (
-                "Portal Status: ✅ CLOCKED_OUT\n\n"
-                f"DB update: last_evening_success_date = {today.isoformat()}\n\n"
-                "⬇️ *Sending preview below...*"
-            )
-            await update.message.reply_text(status_msg, parse_mode="Markdown")
-            
-            if details and details.get('clock_out'):
-                formatted_time = escape_md(details['clock_out']['time'])
-                location = escape_md(details['clock_out']['location'])
-            else:
-                formatted_time = escape_md(test_time.strftime("%I:%M %p"))
-                location = "Unknown"
-                
+    test_date = get_current_time_eat().date()
+    if len(context.args) > 1:
+        try:
+            test_date = datetime.strptime(context.args[1], "%Y-%m-%d").date()
+        except ValueError:
             await update.message.reply_text(
-                f"👋 *Clock-Out Confirmed!*\n\n"
-                f"🕒 *Time:* {formatted_time}\n"
-                f"📍 *Location:* {location}\n\n"
-                f"Your shift is complete. See you tomorrow!",
-                parse_mode="Markdown"
+                "❌ Invalid date format!\n\n"
+                "Please use YYYY-MM-DD format (e.g., 2026-05-15)"
             )
             return
-        elif portal_status == AttendanceStatus.CLOCKED_IN:
-            from datetime import datetime, timedelta
-            end_datetime = datetime.combine(today, end_time)
-            current_datetime = datetime.combine(today, test_time)
-            grace_period = timedelta(minutes=25)
-            
-            if current_datetime >= end_datetime + grace_period:
-                status_msg += (
-                    "Portal Status: ⏰ CLOCKED_IN (still clocked in)\n"
-                    f"Time since shift end: {(current_datetime - end_datetime).seconds // 60} minutes\n\n"
-                    f"DB update: last_evening_alert_date = {today.isoformat()}\n\n"
-                    "⬇️ *Sending preview below...*"
-                )
-                await update.message.reply_text(status_msg, parse_mode="Markdown")
-                await update.message.reply_text(
-                    "🚨 *CRITICAL ALERT!*\n\n"
-                    "⚠️ You have missed the clock-out window!",
-                    parse_mode="Markdown"
-                )
-                return
-            else:
-                mins_until_alert = 25 - ((current_datetime - end_datetime).seconds // 60)
-                status_msg += (
-                    "Portal Status: ⏰ CLOCKED_IN (still clocked in)\n"
-                    f"Time since shift end: {(current_datetime - end_datetime).seconds // 60} minutes\n"
-                    f"Grace period remaining: {mins_until_alert} minutes\n\n"
-                    "⏳ No alert yet - within grace period\n"
-                    f"Alert would be sent at {(end_datetime + grace_period).strftime('%H:%M')}"
-                )
-        else:
-            status_msg += (
-                "Portal Status: ❌ NO_RECORD\n\n"
-                "⚠️ No action - No clock-in found, skipping clock-out check"
-            )
     
-    elif morning_window:
-        status_msg += "🌅 **Morning Window (Clock-in Check)**\n\n"
-        await update.message.reply_text(status_msg + "🔄 Checking portal...", parse_mode="Markdown")
-        
-        portal_url = os.getenv("PORTAL_URL", "https://example.com/attendance")
-        async with aiohttp.ClientSession() as session:
-            portal_status, details = await check_attendance_async(session, user['kaba_id'], today, portal_url)
-        
-        if portal_status == AttendanceStatus.ERROR:
-            status_msg += (
-                "Portal Status: ⚠️ ERROR\n\n"
-                "⚠️ No action - Error connecting to the portal, skipping clock-in check"
-            )
-        elif portal_status == AttendanceStatus.CLOCKED_IN:
-            status_msg += (
-                "Portal Status: ✅ CLOCKED_IN\n\n"
-                f"DB update: last_morning_success_date = {today.isoformat()}\n\n"
-                "⬇️ *Sending preview below...*"
-            )
-            await update.message.reply_text(status_msg, parse_mode="Markdown")
-            
-            if details and details.get('clock_in'):
-                formatted_time = escape_md(details['clock_in']['time'])
-                location = escape_md(details['clock_in']['location'])
-            else:
-                formatted_time = escape_md(test_time.strftime("%I:%M %p"))
-                location = "Unknown"
-                
-            await update.message.reply_text(
-                f"✅ *Clock-In Confirmed!*\n\n"
-                f"🕒 *Time:* {formatted_time}\n"
-                f"📍 *Location:* {location}\n\n"
-                f"Have a great day!",
-                parse_mode="Markdown"
-            )
-            return
-        elif portal_status == AttendanceStatus.NO_RECORD:
-            from datetime import datetime, timedelta
-            start_datetime = datetime.combine(today, start_time)
-            current_datetime = datetime.combine(today, test_time)
-            grace_period = timedelta(minutes=10)
-            
-            if current_datetime >= start_datetime + grace_period:
-                status_msg += (
-                    "Portal Status: ❌ NO_RECORD\n"
-                    f"Time since shift start: {(current_datetime - start_datetime).seconds // 60} minutes\n\n"
-                    f"DB update: last_morning_alert_date = {today.isoformat()}\n\n"
-                    "⬇️ *Sending preview below...*"
-                )
-                await update.message.reply_text(status_msg, parse_mode="Markdown")
-                await update.message.reply_text(
-                    "🚨 *CRITICAL ALERT!*\n\n"
-                    "⚠️ You have missed the clock-in window!",
-                    parse_mode="Markdown"
-                )
-                return
-            else:
-                mins_until_alert = 10 - ((current_datetime - start_datetime).seconds // 60)
-                status_msg += (
-                    "Portal Status: ❌ NO_RECORD\n"
-                    f"Time since shift start: {(current_datetime - start_datetime).seconds // 60} minutes\n"
-                    f"Grace period remaining: {mins_until_alert} minutes\n\n"
-                    "⏳ No alert yet - within grace period\n"
-                    f"Alert would be sent at {(start_datetime + grace_period).strftime('%H:%M')}"
-                )
-        else:
-            status_msg += (
-                "Portal Status: ✅ Already clocked out\n\n"
-                "✅ No action needed"
-            )
-    else:
-        status_msg += (
-            f"⏰ **Before Shift Start ({user['start_time']})**\n\n"
-            "⏳ Scheduler would skip - too early in the day"
-        )
-    
-    await update.message.reply_text(status_msg)
+    from .testing import run_test_simulation
+    await run_test_simulation(update, context, user, test_time, test_date)
 
 
 # ==================== REGISTRATION CONVERSATION ====================
@@ -565,3 +450,55 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=ReplyKeyboardRemove()
     )
     return ConversationHandler.END
+
+
+# ==================== CALLBACK QUERY LOGIC ====================
+
+async def alert_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle callback queries from alert inline keyboards."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    action = query.data
+    message_text = ""
+    if query.message:
+        message_text = query.message.text or query.message.caption or ""
+
+    # Older alert messages may have been sent with the wrong callback data.
+    # Trust the visible alert text when it clearly identifies clock-in/out.
+    lowered_message = message_text.lower()
+    if "clock-out" in lowered_message and action.endswith("_morning"):
+        action = action.replace("_morning", "_evening")
+    elif "clock-in" in lowered_message and action.endswith("_evening"):
+        action = action.replace("_evening", "_morning")
+    
+    now = get_current_time_eat()
+    today = now.date()
+    
+    if action == "snooze_morning":
+        snooze_until = now + timedelta(minutes=30)
+        await db.set_morning_snooze(user_id, snooze_until.isoformat())
+        await query.edit_message_text(
+            f"💤 *Morning clock-in alert snoozed!*\n\nI won't remind you again until {snooze_until.strftime('%I:%M %p')}.",
+            parse_mode="Markdown"
+        )
+    elif action == "dismiss_morning":
+        await db.set_morning_dismissed(user_id, today.isoformat())
+        await query.edit_message_text(
+            "✅ *Morning alert dismissed!*\n\nI won't remind you again for this morning's clock-in.",
+            parse_mode="Markdown"
+        )
+    elif action == "snooze_evening":
+        snooze_until = now + timedelta(minutes=30)
+        await db.set_evening_snooze(user_id, snooze_until.isoformat())
+        await query.edit_message_text(
+            f"💤 *Evening clock-out alert snoozed!*\n\nI won't remind you again until {snooze_until.strftime('%I:%M %p')}.",
+            parse_mode="Markdown"
+        )
+    elif action == "dismiss_evening":
+        await db.set_evening_dismissed(user_id, today.isoformat())
+        await query.edit_message_text(
+            "✅ *Evening alert dismissed!*\n\nI won't remind you again for this evening's clock-out.",
+            parse_mode="Markdown"
+        )
